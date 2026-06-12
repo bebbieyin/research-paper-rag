@@ -1,0 +1,103 @@
+{
+  "name": "rag-langchain",
+  "branch_name": "master",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "@commitlint/cli": "^20.2.0",
+    "@commitlint/config-conventional": "^20.2.0"
+  },
+  "packageManager": "pnpm@8.9.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "release": {
+    "plugins": [
+      [
+        "@semantic-release/commit-analyzer",
+        {
+          "preset": "angular",
+          "releaseRules": [
+            {
+              "type": "feat",
+              "release": "minor"
+            },
+            {
+              "type": "fix",
+              "release": "patch"
+            },
+            {
+              "type": "revert",
+              "release": "patch"
+            },
+            {
+              "type": "chore",
+              "release": false
+            },
+            {
+              "type": "refactor",
+              "release": false
+            },
+            {
+              "type": "test",
+              "release": false
+            }
+          ]
+        }
+      ],
+      [
+        "@semantic-release/release-notes-generator",
+        {
+          "preset": "angular",
+          "presetConfig": {
+            "types": [
+              {
+                "type": "feat",
+                "section": "Features"
+              },
+              {
+                "type": "fix",
+                "section": "Bug Fixes"
+              },
+              {
+                "type": "revert",
+                "section": "Reverts"
+              },
+              {
+                "type": "chore",
+                "hidden": true
+              },
+              {
+                "type": "refactor",
+                "hidden": true
+              },
+              {
+                "type": "test",
+                "hidden": true
+              }
+            ]
+          }
+        }
+      ],
+      "@semantic-release/changelog",
+      "@semantic-release/npm",
+      "@semantic-release/github",
+      "@semantic-release/git"
+    ],
+    "prepare": [
+      "@semantic-release/changelog",
+      {
+        "path": "@semantic-release/npm",
+        "npmPublish": false
+      },
+      {
+        "path": "@semantic-release/git",
+        "assets": [
+          "package.json",
+          "CHANGELOG.md"
+        ],
+        "message": "chore(release): ${nextRelease.gitTag} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ]
+  }
+}
