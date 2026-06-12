@@ -1,0 +1,38 @@
+name: Bandit
+run-name: ${{ github.workflow }} - ${{ github.event.pull_request.title }}
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  Code-Scanning:
+    name: Code Scanning
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.3.0
+        with:
+          enable-cache: false
+          version: "latest"
+
+      - name: Install Bandit
+        run: uv tool install 'bandit==1.9.4'
+
+      - name: Run Bandit
+        run: uv tool run bandit -r .
