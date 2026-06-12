@@ -1,0 +1,54 @@
+name: ClickUp
+run-name: ${{ github.workflow }} - ${{ github.event.pull_request.title }}
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  update-task-status:
+    name: Update Task Status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract ClickUp Task ID
+        id: extract
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          # Match branch format: CU-{task_id}_...
+          if [[ "$BRANCH" =~ ^CU-([a-zA-Z0-9]+)_ ]]; then
+            echo "task_id=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ClickUp task ID found in branch: $BRANCH"
+            exit 0
+          fi
+
+      - name: Set status on PR open / update
+        if: |
+          steps.extract.outputs.task_id != '' &&
+          github.event.action != 'closed'
+        run: |
+          curl -s -X PUT "https://api.clickup.com/api/v2/task/${{ steps.extract.outputs.task_id }}" \
+            -H "Authorization: ${{ secrets.CLICKUP_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "in review"}'
+
+      - name: Set status on PR merged
+        if: |
+          steps.extract.outputs.task_id != '' &&
+          github.event.action == 'closed' &&
+          github.event.pull_request.merged == true
+        run: |
+          curl -s -X PUT "https://api.clickup.com/api/v2/task/${{ steps.extract.outputs.task_id }}" \
+            -H "Authorization: ${{ secrets.CLICKUP_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"status": "complete"}'

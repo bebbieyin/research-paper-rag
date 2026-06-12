@@ -1,6 +1,6 @@
 {
-  "name": "rag-langchain",
-  "branch_name": "master",
+  "name": "research-paper-rag",
+  "branch_name": "main",
   "version": "1.0.0",
   "private": true,
   "devDependencies": {
