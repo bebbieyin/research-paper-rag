@@ -38,9 +38,3 @@ async def ask(request: QuestionRequest) -> QuestionAnswer:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="RAG service is unavailable.",
         ) from exc
-
-
-@app.post("/answer-question")
-async def answer_question(request: QuestionRequest) -> QuestionAnswer:
-    """Backward-compatible alias for /ask."""
-    return await ask(request)
