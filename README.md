@@ -22,6 +22,41 @@ Start the API:
 uv run uvicorn src.main:app --reload
 ```
 
+### Run with Docker
+
+Build and start the API after Dockerfile:
+
+```bash
+docker compose up --build
+```
+
+Start the already-built image:
+
+```bash
+docker compose up
+```
+
+Start it in the background:
+
+```bash
+docker compose up -d
+```
+
+Stop the API:
+
+```bash
+docker compose down
+```
+
+The Compose setup reads secrets from `.env`, exposes the API on port `8000`,
+and mounts local PDFs from `data/` into the container at `/app/data`.
+
+Run the health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
 ### Endpoints
 
 Health check:
