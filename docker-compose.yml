@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: .
+    image: research-paper-rag:local
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data:ro
+      - huggingface-cache:/app/.cache/huggingface
+      - sentence-transformers-cache:/app/.cache/sentence-transformers
+    restart: unless-stopped
+
+volumes:
+  huggingface-cache:
+  sentence-transformers-cache:
