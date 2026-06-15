@@ -1,3 +1,11 @@
+# [1.1.0](https://github.com/bebbieyin/research-paper-rag/compare/v1.0.0+main...v1.1.0+main) (2026-06-15)
+
+
+### Features
+
+* CU-86exxxh3h - add API endpoints ([59cf88d](https://github.com/bebbieyin/research-paper-rag/commit/59cf88d16fd42be585ad752d91a4f2194b69c61d))
+* CU-86exxxh3h - update rag experiment notebook ([8942c73](https://github.com/bebbieyin/research-paper-rag/commit/8942c739cb07e83cfde95fb8b32dc85b3cc609bf))
+
 # 1.0.0 (2026-06-12)
 
 
