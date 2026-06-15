@@ -8,7 +8,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_pinecone import PineconeVectorStore
 
-from schema import QuestionAnswer, QuestionData
+from src.schema import QuestionAnswer, QuestionData
 
 model_name = "BAAI/bge-small-en"
 model_kwargs = {"device": "cpu"}
