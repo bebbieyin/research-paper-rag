@@ -24,20 +24,35 @@ from src.schema import InsertResponse, QuestionAnswer
 
 load_dotenv()
 
-INDEX_NAME = getenv("PINECONE_INDEX_NAME", "research-paper-rag-bge-m3")
-NAMESPACE = getenv("PINECONE_NAMESPACE", "papers-v1")
 
-EMBEDDING_MODEL = getenv("HF_EMBEDDING_MODEL", "BAAI/bge-m3")
-EMBEDDING_DIMENSION = int(getenv("HF_EMBEDDING_DIMENSION", "1024"))
+def required_env(name: str) -> str:
+    """Return a required environment variable or fail with a clear message."""
+    value = getenv(name)
+    if value is None or value == "":
+        message = f"Missing required environment variable: {name}"
+        raise RuntimeError(message)
+    return value
 
-CHAT_MODEL_ID = getenv("HF_CHAT_MODEL", "deepseek-ai/DeepSeek-V4-Pro")
-HF_PROVIDER = getenv("HF_PROVIDER", "auto")
-RERANK_MODEL = getenv("PINECONE_RERANK_MODEL", "bge-reranker-v2-m3")
 
-CHUNK_SIZE = int(getenv("CHUNK_SIZE", "900"))
-CHUNK_OVERLAP = int(getenv("CHUNK_OVERLAP", "150"))
-RETRIEVAL_TOP_K = int(getenv("RETRIEVAL_TOP_K", "20"))
-RERANK_TOP_N = int(getenv("RERANK_TOP_N", "5"))
+def required_int_env(name: str) -> int:
+    """Return a required integer environment variable."""
+    return int(required_env(name))
+
+
+INDEX_NAME = required_env("PINECONE_INDEX_NAME")
+NAMESPACE = required_env("PINECONE_NAMESPACE")
+
+EMBEDDING_MODEL = required_env("HF_EMBEDDING_MODEL")
+EMBEDDING_DIMENSION = required_int_env("HF_EMBEDDING_DIMENSION")
+
+CHAT_MODEL_ID = required_env("HF_CHAT_MODEL")
+HF_PROVIDER = required_env("HF_PROVIDER")
+RERANK_MODEL = required_env("PINECONE_RERANK_MODEL")
+
+CHUNK_SIZE = required_int_env("CHUNK_SIZE")
+CHUNK_OVERLAP = required_int_env("CHUNK_OVERLAP")
+RETRIEVAL_TOP_K = required_int_env("RETRIEVAL_TOP_K")
+RERANK_TOP_N = required_int_env("RERANK_TOP_N")
 
 ANSWER_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -72,7 +87,7 @@ def project_root() -> Path:
 
 def data_dir() -> Path:
     """Return the PDF data directory."""
-    return Path(getenv("DATA_DIR", project_root() / "data"))
+    return Path(required_env("DATA_DIR"))
 
 
 def stable_chunk_id(doc: Document) -> str:
@@ -122,7 +137,7 @@ def load_pdf_chunks() -> tuple[int, list[Document]]:
 @lru_cache(maxsize=1)
 def pinecone_client() -> Pinecone:
     """Return a cached Pinecone client."""
-    return Pinecone(api_key=getenv("PINECONE_API_KEY"))
+    return Pinecone(api_key=required_env("PINECONE_API_KEY"))
 
 
 def ensure_index() -> object:
