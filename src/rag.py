@@ -5,14 +5,13 @@ from functools import lru_cache
 from os import getenv
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
 from dotenv import load_dotenv
 from google.cloud import storage
 from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_core.documents import Document
-from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_huggingface import (
     ChatHuggingFace,
@@ -23,7 +22,7 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pinecone import Pinecone, ServerlessSpec
 
-from src.schema import IndexResponse, QuestionAnswer
+from src.schema import GeneratedAnswer, IndexResponse, QuestionAnswer, SourceCitation
 
 load_dotenv()
 
@@ -65,6 +64,9 @@ CHUNK_OVERLAP = required_int_env("CHUNK_OVERLAP")
 RETRIEVAL_TOP_K = required_int_env("RETRIEVAL_TOP_K")
 RERANK_TOP_N = required_int_env("RERANK_TOP_N")
 INDEX_UPSERT_BATCH_SIZE = int(getenv("INDEX_UPSERT_BATCH_SIZE", "100"))
+HIGH_CONFIDENCE_RERANK_SCORE = 0.75
+MEDIUM_CONFIDENCE_RERANK_SCORE = 0.45
+SUPPORTING_RERANK_SCORE = 0.50
 
 ANSWER_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -72,24 +74,19 @@ ANSWER_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "You answer questions about research papers. Use only the provided "
             "context. If the context is insufficient, say you are unsure. "
-            "Return only valid JSON that matches the requested schema. Do not "
-            "wrap the JSON in Markdown. Every source citation object must include "
-            "all of these fields: source, page, chunk_number, quote. If a field "
-            'is unavailable, use "unknown" for source, page, or chunk_number, '
-            "and an empty string for quote. Always include confidence as one of "
-            '"high", "medium", or "low".\n\n'
-            "{format_instructions}",
+            "Return a structured answer matching the requested schema. The "
+            "service will attach retrieved source metadata and confidence "
+            "after generation.",
         ),
         ("human", "Question:\n{question}\n\nRetrieved context:\n{context}"),
     ],
 )
-ANSWER_PARSER = PydanticOutputParser(pydantic_object=QuestionAnswer)
 
 
 class AnswerChain(Protocol):
     """Small protocol for the cached LangChain object used by this module."""
 
-    def invoke(self, input_data: dict[str, str]) -> QuestionAnswer:
+    def invoke(self, input_data: dict[str, str]) -> dict[str, Any] | GeneratedAnswer:
         """Run the chain."""
 
 
@@ -338,6 +335,77 @@ def format_context(docs: list[Document]) -> str:
     )
 
 
+def source_citations(docs: list[Document]) -> list[SourceCitation]:
+    """Build grounded API citations from retrieved source chunks."""
+    citations = []
+    for doc in docs:
+        quote = " ".join(doc.page_content.split())
+        citations.append(
+            SourceCitation(
+                source=str(doc.metadata.get("source", "unknown")),
+                page=doc.metadata.get("page", "unknown"),
+                chunk_number=doc.metadata.get("chunk_number", "unknown"),
+                quote=quote[:280],
+            )
+        )
+    return citations
+
+
+def answer_confidence(answer: str, docs: list[Document]) -> str:
+    """Infer a coarse confidence label from answer text and retrieval quality."""
+    confidence = "low"
+
+    normalized_answer = answer.lower()
+    has_uncertain_answer = (
+        "unsure" in normalized_answer or "insufficient" in normalized_answer
+    )
+    if docs and not has_uncertain_answer:
+        rerank_scores = [
+            score
+            for doc in docs
+            if isinstance(score := doc.metadata.get("rerank_score"), float)
+        ]
+        if rerank_scores:
+            best_score = max(rerank_scores)
+            supporting_docs = sum(
+                score >= SUPPORTING_RERANK_SCORE for score in rerank_scores
+            )
+            if (
+                best_score >= HIGH_CONFIDENCE_RERANK_SCORE
+                and supporting_docs >= 2
+            ):
+                confidence = "high"
+            elif best_score >= MEDIUM_CONFIDENCE_RERANK_SCORE:
+                confidence = "medium"
+        elif len(docs) == 1:
+            confidence = "medium"
+        else:
+            confidence = "high"
+
+    return confidence
+
+
+def normalize_answer(
+    raw_answer: dict[str, Any] | GeneratedAnswer,
+    question: str,
+    docs: list[Document],
+) -> QuestionAnswer:
+    """Return a complete API answer from structured model output and metadata."""
+    if isinstance(raw_answer, GeneratedAnswer):
+        answer_text = raw_answer.answer
+    else:
+        answer_text = str(raw_answer.get("answer") or "").strip()
+
+    confidence = answer_confidence(answer_text, docs)
+
+    return QuestionAnswer(
+        question=question,
+        answer=answer_text or "I am unsure based on the provided context.",
+        sources=source_citations(docs),
+        confidence=confidence,
+    )
+
+
 @lru_cache(maxsize=1)
 def rag_chain() -> AnswerChain:
     """Return the cached answer-generation chain."""
@@ -349,16 +417,20 @@ def rag_chain() -> AnswerChain:
         do_sample=False,
         repetition_penalty=1.03,
     )
-    return ANSWER_PROMPT | ChatHuggingFace(llm=llm) | ANSWER_PARSER
+    structured_llm = ChatHuggingFace(llm=llm).with_structured_output(
+        GeneratedAnswer,
+        method="json_schema",
+    )
+    return ANSWER_PROMPT | structured_llm
 
 
 def answer_question(question: str) -> QuestionAnswer:
     """Answer a question using retrieved paper chunks."""
     docs = retrieve(question)
-    return rag_chain().invoke(
+    raw_answer = rag_chain().invoke(
         {
             "question": question,
             "context": format_context(docs),
-            "format_instructions": ANSWER_PARSER.get_format_instructions(),
         }
     )
+    return normalize_answer(raw_answer, question, docs)
