@@ -1,3 +1,13 @@
+# [1.3.0](https://github.com/bebbieyin/research-paper-rag/compare/v1.2.0+main...v1.3.0+main) (2026-06-17)
+
+
+### Features
+
+* CU-86exz2vmg - add google storage ([7c334b9](https://github.com/bebbieyin/research-paper-rag/commit/7c334b9bdfdb3d543d783767c37309d3ed3ce599))
+* CU-86exz2vmg - convert index api to cloud run job ([ba06243](https://github.com/bebbieyin/research-paper-rag/commit/ba06243d347b35c37692e029faa6c3cea732a962))
+* CU-86exz2vmg - read from remote cloud storage ([fd5818a](https://github.com/bebbieyin/research-paper-rag/commit/fd5818a05b693107d495ae6093f5695a9151df51))
+* CU-86exz2vmg - use confidence and source from db ([152cb7e](https://github.com/bebbieyin/research-paper-rag/commit/152cb7eda54e6c2da87fb4060ea64cc4f3d09058))
+
 # [1.2.0](https://github.com/bebbieyin/research-paper-rag/compare/v1.1.0+main...v1.2.0+main) (2026-06-17)
 
 
