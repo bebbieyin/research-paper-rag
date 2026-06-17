@@ -1,0 +1,37 @@
+name: Pytest
+run-name: ${{ github.workflow }} - ${{ github.event.pull_request.title }}
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  Test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.3.0
+        with:
+          enable-cache: true
+          version: "latest"
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install dependencies
+        run: uv sync --group test
+
+      - name: Run pytest
+        run: uv run --group test pytest

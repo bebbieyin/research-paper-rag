@@ -36,6 +36,7 @@ default:
     @echo "  just data-refresh                 # sync PDFs to Cloud Storage and run indexing job"
     @echo "  just deploy-local                 # rebuild and run the app locally with Docker"
     @echo "  just run-local                    # run the app locally without Docker"
+    @echo "  just test                         # run pytest"
     @echo "  just health                       # call local /health"
     @echo "  just ask \"question\"               # call local /ask"
     @echo "  just deploy-production            # build, push, and deploy to Cloud Run"
@@ -55,7 +56,7 @@ default:
     @just --list --unsorted
 
 # Rebuild and run the app locally with Docker after code changes.
-deploy-local:
+deploy-local: test
     docker compose up --build -d
     @echo "Local API: {{local_url}}"
 
@@ -63,8 +64,12 @@ deploy-local:
 run-local:
     uv run uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
 
+# Run the test suite.
+test:
+    uv run --group test pytest
+
 # Build, push, and deploy the app and indexing job to Cloud Run.
-deploy-production: _require-committed _cloud-build _cloud-push _cloud-deploy _cloud-job-deploy
+deploy-production: test _require-committed _cloud-build _cloud-push _cloud-deploy _cloud-job-deploy
 
 # Call the local health endpoint.
 health:
