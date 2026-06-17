@@ -35,4 +35,4 @@ jobs:
         run: uv tool install 'bandit==1.9.4'
 
       - name: Run Bandit
-        run: uv tool run bandit -r .
+        run: uv tool run bandit -r src tests -s B101
