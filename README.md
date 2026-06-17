@@ -1,58 +1,28 @@
 ## Research Paper RAG API
 
-The API has two production steps:
+The API has two main production steps:
 
-1. Index PDFs from `data/` into Pinecone.
+1. Sync PDFs to Cloud Storage and index them into Pinecone.
 2. Ask questions against the indexed paper chunks.
 
-### Run
+### Setup
 
 Create `.env` from the example and fill in your real values.
 
-Start the API:
-
 ```bash
-uv run uvicorn src.main:app --reload
+cp .env.example .env
 ```
 
-### Run with Docker
-
-Build and start the API after Dockerfile:
+One-time cloud setup:
 
 ```bash
-docker compose up --build
+just grant-secret-access
+just setup-bucket
 ```
 
-Start the already-built image:
+### Workflow
 
-```bash
-docker compose up
-```
-
-Start it in the background:
-
-```bash
-docker compose up -d
-```
-
-Stop the API:
-
-```bash
-docker compose down
-```
-
-The Compose setup reads secrets from `.env`, exposes the API on port `8000`,
-and mounts local PDFs from `data/` into the container at `/app/data`.
-
-Run the health check:
-
-```bash
-curl http://127.0.0.1:8000/health
-```
-
-### Shortcut Commands
-
-This repo includes a `justfile` for common local and deployment commands.
+This repo uses `just` for the main local and cloud workflow.
 
 List available commands:
 
@@ -60,17 +30,59 @@ List available commands:
 just
 ```
 
-Main workflow after code changes:
+When PDFs change, refresh the data first:
+
+```bash
+just data-refresh
+```
+
+Then make code changes and test locally:
 
 ```bash
 just deploy-local
 just health
+just ask "What are the categories of attentional models?"
 ```
 
-Deploy to Cloud Run after local testing:
+Deploy to Cloud Run and test the cloud API:
 
 ```bash
 just deploy-production
+just cloud-ask "What are the categories of attentional models?"
+```
+
+Useful checks:
+
+```bash
+just logs
+just cloud-logs
+just data-list
+just cloud-url
+```
+
+Stop the local Docker app:
+
+```bash
+just stop
+```
+
+`just data-refresh` syncs local `DATA_DIR` to Cloud Storage and asks Cloud Run
+to index the bucket PDFs into Pinecone. `just deploy-production` is only for
+shipping code changes.
+
+The local Docker app reads PDFs from local `DATA_DIR`; Cloud Run reads PDFs
+from `GCS_BUCKET` and `GCS_PREFIX`.
+
+### Short Version
+
+```bash
+just data-refresh  # when PDFs changed
+# make code changes
+just deploy-local
+just health
+just ask "What are the categories of attentional models?"
+just deploy-production
+just cloud-ask "What are the categories of attentional models?"
 ```
 
 ### Endpoints
