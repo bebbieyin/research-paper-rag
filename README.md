@@ -177,3 +177,7 @@ curl -X POST http://127.0.0.1:8000/ask \
   -H "Content-Type: application/json" \
   -d '{"question":"What are the categories of attentional models?"}'
 ```
+
+Example `/ask` response:
+
+![Example ask response with answer, sources, and confidence](docs/images/ask-response.png)
