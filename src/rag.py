@@ -370,10 +370,7 @@ def answer_confidence(answer: str, docs: list[Document]) -> str:
             supporting_docs = sum(
                 score >= SUPPORTING_RERANK_SCORE for score in rerank_scores
             )
-            if (
-                best_score >= HIGH_CONFIDENCE_RERANK_SCORE
-                and supporting_docs >= 2
-            ):
+            if best_score >= HIGH_CONFIDENCE_RERANK_SCORE and supporting_docs >= 2:
                 confidence = "high"
             elif best_score >= MEDIUM_CONFIDENCE_RERANK_SCORE:
                 confidence = "medium"
