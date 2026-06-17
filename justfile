@@ -23,15 +23,17 @@ chunk_overlap := env_var("CHUNK_OVERLAP")
 retrieval_top_k := env_var("RETRIEVAL_TOP_K")
 rerank_top_n := env_var("RERANK_TOP_N")
 index_upsert_batch_size := env_var_or_default("INDEX_UPSERT_BATCH_SIZE", "100")
-image := region + "-docker.pkg.dev/" + project_id + "/" + repository + "/" + service + ":latest"
+commit_sha := `git rev-parse --short HEAD`
+image := region + "-docker.pkg.dev/" + project_id + "/" + repository + "/" + service + ":" + commit_sha
 index_job := service + "-indexer"
-runtime_env := "PROJECT_ID=" + project_id + ",GCS_BUCKET=$GCS_BUCKET,GCS_PREFIX=$GCS_PREFIX,PINECONE_INDEX_NAME=" + pinecone_index_name + ",PINECONE_NAMESPACE=" + pinecone_namespace + ",HF_EMBEDDING_MODEL=" + hf_embedding_model + ",HF_EMBEDDING_DIMENSION=" + hf_embedding_dimension + ",HF_CHAT_MODEL=" + hf_chat_model + ",HF_PROVIDER=" + hf_provider + ",PINECONE_RERANK_MODEL=" + pinecone_rerank_model + ",CHUNK_SIZE=" + chunk_size + ",CHUNK_OVERLAP=" + chunk_overlap + ",RETRIEVAL_TOP_K=" + retrieval_top_k + ",RERANK_TOP_N=" + rerank_top_n + ",INDEX_UPSERT_BATCH_SIZE=" + index_upsert_batch_size
+runtime_env := "PROJECT_ID=" + project_id + ",GCS_BUCKET=$GCS_BUCKET,GCS_PREFIX=$GCS_PREFIX,PINECONE_INDEX_NAME=" + pinecone_index_name + ",PINECONE_NAMESPACE=" + pinecone_namespace + ",HF_EMBEDDING_MODEL=" + hf_embedding_model + ",HF_EMBEDDING_DIMENSION=" + hf_embedding_dimension + ",HF_CHAT_MODEL=" + hf_chat_model + ",HF_PROVIDER=" + hf_provider + ",PINECONE_RERANK_MODEL=" + pinecone_rerank_model + ",CHUNK_SIZE=" + chunk_size + ",CHUNK_OVERLAP=" + chunk_overlap + ",RETRIEVAL_TOP_K=" + retrieval_top_k + ",RERANK_TOP_N=" + rerank_top_n + ",INDEX_UPSERT_BATCH_SIZE=" + index_upsert_batch_size + ",COMMIT_SHA=" + commit_sha
 
 # Show the main workflow commands.
 default:
     @echo "Main workflow:"
     @echo "  just data-refresh                 # sync PDFs to Cloud Storage and run indexing job"
     @echo "  just deploy-local                 # rebuild and run the app locally with Docker"
+    @echo "  just run-local                    # run the app locally without Docker"
     @echo "  just health                       # call local /health"
     @echo "  just ask \"question\"               # call local /ask"
     @echo "  just deploy-production            # build, push, and deploy to Cloud Run"
@@ -55,8 +57,12 @@ deploy-local:
     docker compose up --build -d
     @echo "Local API: {{local_url}}"
 
+# Run the app locally without Docker.
+run-local:
+    uv run uvicorn src.main:app --host 127.0.0.1 --port 8000 --reload
+
 # Build, push, and deploy the app and indexing job to Cloud Run.
-deploy-production: _cloud-build _cloud-push _cloud-deploy _cloud-job-deploy
+deploy-production: _require-committed _cloud-build _cloud-push _cloud-deploy _cloud-job-deploy
 
 # Call the local health endpoint.
 health:
@@ -85,6 +91,11 @@ _cloud-build:
 [private]
 _cloud-push:
     docker push "{{image}}"
+
+# Require deployment from a committed, clean working tree.
+[private]
+_require-committed:
+    @test -z "$(git status --porcelain)" || (echo "There are files not committed yet. Commit or stash changes before deploying." && exit 1)
 
 # Grant Cloud Run's runtime service account access to Secret Manager secrets.
 grant-secret-access:
@@ -148,6 +159,7 @@ _cloud-deploy:
       --timeout "{{cloud_run_timeout}}" \
       --min-instances 0 \
       --max-instances 2 \
+      --labels commit-sha="{{commit_sha}}" \
       --set-env-vars "{{runtime_env}}" \
       --set-secrets PINECONE_API_KEY=pinecone-api-key:latest,HUGGINGFACEHUB_API_TOKEN=huggingfacehub-api-token:latest,HF_TOKEN=huggingfacehub-api-token:latest
 
@@ -161,6 +173,7 @@ _cloud-job-deploy:
       --cpu "{{cloud_run_cpu}}" \
       --task-timeout "{{cloud_run_job_timeout}}" \
       --max-retries 0 \
+      --labels commit-sha="{{commit_sha}}" \
       --set-env-vars "{{runtime_env}}" \
       --set-secrets PINECONE_API_KEY=pinecone-api-key:latest,HUGGINGFACEHUB_API_TOKEN=huggingfacehub-api-token:latest,HF_TOKEN=huggingfacehub-api-token:latest \
       --command uv \
