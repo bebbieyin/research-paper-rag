@@ -1,7 +1,5 @@
 ## Research Paper RAG API
 
-Minimal FastAPI service extracted from `notebooks/Research paper RAG.ipynb`.
-
 The API has two production steps:
 
 1. Index PDFs from `data/` into Pinecone.
@@ -9,12 +7,7 @@ The API has two production steps:
 
 ### Run
 
-Create `.env`:
-
-```env
-PINECONE_API_KEY=...
-HUGGINGFACEHUB_API_TOKEN=...
-```
+Create `.env` from the example and fill in your real values.
 
 Start the API:
 
@@ -55,6 +48,29 @@ Run the health check:
 
 ```bash
 curl http://127.0.0.1:8000/health
+```
+
+### Shortcut Commands
+
+This repo includes a `justfile` for common local and deployment commands.
+
+List available commands:
+
+```bash
+just
+```
+
+Main workflow after code changes:
+
+```bash
+just deploy-local
+just health
+```
+
+Deploy to Cloud Run after local testing:
+
+```bash
+just deploy-production
 ```
 
 ### Endpoints
