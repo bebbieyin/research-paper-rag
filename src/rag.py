@@ -3,10 +3,12 @@
 from functools import lru_cache
 from os import getenv
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
 from uuid import NAMESPACE_URL, uuid5
 
 from dotenv import load_dotenv
+from google.cloud import storage
 from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_core.output_parsers import PydanticOutputParser
@@ -37,6 +39,12 @@ def required_env(name: str) -> str:
 def required_int_env(name: str) -> int:
     """Return a required integer environment variable."""
     return int(required_env(name))
+
+
+def optional_env(name: str) -> str | None:
+    """Return an optional environment variable when it has a value."""
+    value = getenv(name)
+    return value if value else None
 
 
 INDEX_NAME = required_env("PINECONE_INDEX_NAME")
@@ -75,19 +83,17 @@ class AnswerChain(Protocol):
         """Run the chain."""
 
 
-def project_root() -> Path:
-    """Return the repository root when running from the repo or from notebooks."""
-    cwd = Path.cwd()
-    if (cwd / "data").exists():
-        return cwd
-    if (cwd.parent / "data").exists():
-        return cwd.parent
-    return cwd
-
-
 def data_dir() -> Path:
     """Return the PDF data directory."""
     return Path(required_env("DATA_DIR"))
+
+
+def gcs_pdf_source() -> tuple[str, str] | None:
+    """Return the configured GCS PDF source, if enabled."""
+    bucket = optional_env("GCS_BUCKET")
+    if bucket is None:
+        return None
+    return bucket, required_env("GCS_PREFIX").strip("/")
 
 
 def stable_chunk_id(doc: Document) -> str:
@@ -101,15 +107,56 @@ def stable_chunk_id(doc: Document) -> str:
     )
 
 
-def load_pdf_chunks() -> tuple[int, list[Document]]:
-    """Load PDFs from DATA_DIR and split them into indexed chunks."""
+def load_local_pdf_pages() -> list[Document]:
+    """Load PDF pages from DATA_DIR."""
     loader = DirectoryLoader(
         str(data_dir()),
         glob="**/*.pdf",
         loader_cls=PyMuPDFLoader,
         show_progress=False,
     )
-    pages = loader.load()
+    return loader.load()
+
+
+def load_gcs_pdf_pages(bucket_name: str, prefix: str) -> list[Document]:
+    """Download PDF objects from GCS to temp files and load their pages."""
+    client = storage.Client(project=optional_env("PROJECT_ID"))
+    blobs = [
+        blob
+        for blob in client.list_blobs(bucket_name, prefix=prefix)
+        if blob.name.lower().endswith(".pdf")
+    ]
+
+    pages = []
+    with TemporaryDirectory(prefix="research-paper-rag-") as temp_dir:
+        temp_path = Path(temp_dir)
+        for index, blob in enumerate(blobs, start=1):
+            pdf_path = temp_path / f"{index:05d}-{Path(blob.name).name}"
+            blob.download_to_filename(pdf_path)
+            loaded_pages = PyMuPDFLoader(str(pdf_path)).load()
+            for page in loaded_pages:
+                page.metadata.update(
+                    {
+                        "source": Path(blob.name).name,
+                        "source_path": f"gs://{bucket_name}/{blob.name}",
+                    }
+                )
+            pages.extend(loaded_pages)
+    return pages
+
+
+def load_pdf_pages() -> list[Document]:
+    """Load PDF pages from GCS when configured, otherwise from DATA_DIR."""
+    source = gcs_pdf_source()
+    if source is not None:
+        bucket_name, prefix = source
+        return load_gcs_pdf_pages(bucket_name, prefix)
+    return load_local_pdf_pages()
+
+
+def load_pdf_chunks() -> tuple[int, list[Document]]:
+    """Load PDFs and split them into indexed chunks."""
+    pages = load_pdf_pages()
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -120,11 +167,12 @@ def load_pdf_chunks() -> tuple[int, list[Document]]:
 
     for chunk_number, doc in enumerate(chunks):
         source_path = Path(str(doc.metadata.get("source", "unknown")))
+        original_source_path = doc.metadata.get("source_path")
         page = doc.metadata.get("page")
         doc.metadata.update(
             {
-                "source": source_path.name,
-                "source_path": str(source_path),
+                "source": str(doc.metadata.get("source", source_path.name)),
+                "source_path": str(original_source_path or source_path),
                 "page": int(page) + 1 if isinstance(page, int) else page,
                 "chunk_number": chunk_number,
                 "namespace": NAMESPACE,
@@ -179,7 +227,7 @@ def vector_store() -> PineconeVectorStore:
 
 
 def insert_papers() -> InsertResponse:
-    """Index all PDFs in DATA_DIR."""
+    """Index all configured PDFs."""
     loaded_pages, chunks = load_pdf_chunks()
     if chunks:
         vector_store().add_documents(

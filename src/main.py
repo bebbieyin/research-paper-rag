@@ -22,7 +22,7 @@ def health() -> HealthCheck:
 
 @app.post("/insert")
 async def insert() -> InsertResponse:
-    """Load PDFs from DATA_DIR and index them in Pinecone."""
+    """Load configured PDFs and index them in Pinecone."""
     try:
         return await run_in_threadpool(run_insert)
     except Exception as exc:
