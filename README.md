@@ -5,6 +5,78 @@ The API has two main production steps:
 1. Sync PDFs to Cloud Storage and index them into Pinecone.
 2. Ask questions against the indexed paper chunks.
 
+### Project Scope
+
+This project implements an end-to-end production-style RAG application with:
+
+- A **research paper RAG pipeline** that answers questions from indexed PDF
+  content.
+- **Pinecone vector search** for storing embedded paper chunks and retrieving
+  semantically relevant context.
+- **LangChain orchestration** for document loading, text splitting, prompting,
+  embeddings, and vector-store access.
+- **Hugging Face models** for embeddings and chat-based answer generation.
+- A **FastAPI service layer** exposing `/health` and `/ask` endpoints.
+- **Google Cloud Run deployment** for both the API service and indexing worker.
+- **Google Cloud Storage** as the PDF data source for production indexing.
+- **GitHub Actions workflows** for linting, security scanning, commit checks,
+  ClickUp automation, and semantic releases.
+- **ClickUp task automation** that updates task status from pull request
+  activity.
+
+### Technical Stack
+
+| Area | Tools |
+| --- | --- |
+| Backend API | FastAPI, Pydantic |
+| RAG pipeline | LangChain, Hugging Face |
+| Vector database | Pinecone |
+| Cloud platform | Google Cloud Run, Google Cloud Storage |
+| DevOps | uv, Docker, GitHub Actions, semantic-release |
+| Quality and automation | Ruff, Bandit, commitlint, ClickUp |
+
+### Architecture
+
+Question-answering flow:
+
+```mermaid
+flowchart TD
+    User[User / Client] -->|GET /health<br/>POST /ask| API[FastAPI app<br/>src/main.py]
+
+    API -->|validates request/response| Schema[Pydantic schemas<br/>src/schema.py]
+    API -->|run_in_threadpool| RAG[src/rag.py<br/>answer_question]
+
+    RAG --> Retrieve[Retrieve relevant chunks]
+    Retrieve --> Pinecone[(Pinecone vector index<br/>namespace: papers-v1)]
+    Retrieve --> Rerank[Pinecone inference reranker]
+
+    RAG --> Prompt[Build context prompt]
+    Prompt --> HF[Hugging Face chat model]
+    HF --> Normalize[Normalize answer<br/>add sources + confidence]
+    Normalize --> API
+    API --> User
+```
+
+Indexing flow:
+
+```mermaid
+flowchart TD
+    PDFsLocal[Local PDFs<br/>DATA_DIR] --> IndexPipeline
+    PDFsGCS[Cloud Storage PDFs<br/>GCS_BUCKET/GCS_PREFIX] --> IndexPipeline
+
+    IndexJob[Cloud Run Job<br/>src/index_job.py] --> IndexPipeline[src/rag.py<br/>index_papers]
+
+    IndexPipeline --> Load[Load PDFs<br/>PyMuPDFLoader]
+    Load --> Split[Split pages into chunks<br/>RecursiveCharacterTextSplitter]
+    Split --> Embed[Embed chunks<br/>HuggingFaceEmbeddings]
+    Embed --> Upsert[Upsert chunks with stable IDs]
+    Upsert --> Pinecone[(Pinecone vector index)]
+
+    Just[just data-refresh] --> Sync[gcloud storage rsync]
+    Sync --> PDFsGCS
+    Just --> IndexJob
+```
+
 ### Setup
 
 Create `.env` from the example and fill in your real values.
