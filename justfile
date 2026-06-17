@@ -9,7 +9,8 @@ repository := env_var("REPOSITORY")
 project_id := env_var("PROJECT_ID")
 cloud_run_memory := env_var("CLOUD_RUN_MEMORY")
 cloud_run_cpu := env_var("CLOUD_RUN_CPU")
-cloud_run_data_dir := env_var("CLOUD_RUN_DATA_DIR")
+cloud_run_timeout := env_var("CLOUD_RUN_TIMEOUT")
+cloud_run_job_timeout := env_var("CLOUD_RUN_JOB_TIMEOUT")
 pinecone_index_name := env_var("PINECONE_INDEX_NAME")
 pinecone_namespace := env_var("PINECONE_NAMESPACE")
 hf_embedding_model := env_var("HF_EMBEDDING_MODEL")
@@ -21,12 +22,15 @@ chunk_size := env_var("CHUNK_SIZE")
 chunk_overlap := env_var("CHUNK_OVERLAP")
 retrieval_top_k := env_var("RETRIEVAL_TOP_K")
 rerank_top_n := env_var("RERANK_TOP_N")
+index_upsert_batch_size := env_var_or_default("INDEX_UPSERT_BATCH_SIZE", "100")
 image := region + "-docker.pkg.dev/" + project_id + "/" + repository + "/" + service + ":latest"
+index_job := service + "-indexer"
+runtime_env := "PROJECT_ID=" + project_id + ",GCS_BUCKET=$GCS_BUCKET,GCS_PREFIX=$GCS_PREFIX,PINECONE_INDEX_NAME=" + pinecone_index_name + ",PINECONE_NAMESPACE=" + pinecone_namespace + ",HF_EMBEDDING_MODEL=" + hf_embedding_model + ",HF_EMBEDDING_DIMENSION=" + hf_embedding_dimension + ",HF_CHAT_MODEL=" + hf_chat_model + ",HF_PROVIDER=" + hf_provider + ",PINECONE_RERANK_MODEL=" + pinecone_rerank_model + ",CHUNK_SIZE=" + chunk_size + ",CHUNK_OVERLAP=" + chunk_overlap + ",RETRIEVAL_TOP_K=" + retrieval_top_k + ",RERANK_TOP_N=" + rerank_top_n + ",INDEX_UPSERT_BATCH_SIZE=" + index_upsert_batch_size
 
 # Show the main workflow commands.
 default:
     @echo "Main workflow:"
-    @echo "  just data-refresh                 # sync PDFs to Cloud Storage and index them"
+    @echo "  just data-refresh                 # sync PDFs to Cloud Storage and run indexing job"
     @echo "  just deploy-local                 # rebuild and run the app locally with Docker"
     @echo "  just health                       # call local /health"
     @echo "  just ask \"question\"               # call local /ask"
@@ -36,7 +40,8 @@ default:
     @echo "Useful:"
     @echo "  just logs                         # follow local Docker logs"
     @echo "  just stop                         # stop local Docker app"
-    @echo "  just cloud-logs                   # show recent Cloud Run logs"
+    @echo "  just cloud-logs                   # show recent Cloud Run service logs"
+    @echo "  just index-job-logs               # show recent Cloud Run indexing job logs"
     @echo "  just cloud-url                    # print Cloud Run URL"
     @echo "  just data-list                    # list PDFs in Cloud Storage"
     @echo "  just setup-bucket                 # one-time bucket setup"
@@ -50,8 +55,8 @@ deploy-local:
     docker compose up --build -d
     @echo "Local API: {{local_url}}"
 
-# Build, push, and deploy the app to Cloud Run.
-deploy-production: _cloud-build _cloud-push _cloud-deploy
+# Build, push, and deploy the app and indexing job to Cloud Run.
+deploy-production: _cloud-build _cloud-push _cloud-deploy _cloud-job-deploy
 
 # Call the local health endpoint.
 health:
@@ -127,8 +132,8 @@ data-list:
     test -n "$GCS_PREFIX" || (echo "Set GCS_PREFIX in .env first." && exit 1)
     gcloud storage ls "gs://$GCS_BUCKET/$GCS_PREFIX/"
 
-# Sync PDFs to Cloud Storage and index them through the Cloud Run API.
-data-refresh: _gcs-upload-pdfs _cloud-insert
+# Sync PDFs to Cloud Storage and index them with a Cloud Run Job.
+data-refresh: _gcs-upload-pdfs _cloud-index
 
 # Deploy the latest pushed image to Cloud Run. Set PROJECT_ID in .env first.
 [private]
@@ -140,20 +145,35 @@ _cloud-deploy:
       --port 8000 \
       --memory "{{cloud_run_memory}}" \
       --cpu "{{cloud_run_cpu}}" \
+      --timeout "{{cloud_run_timeout}}" \
       --min-instances 0 \
       --max-instances 2 \
-      --set-env-vars PROJECT_ID="{{project_id}}",DATA_DIR="{{cloud_run_data_dir}}",GCS_BUCKET="$GCS_BUCKET",GCS_PREFIX="$GCS_PREFIX",PINECONE_INDEX_NAME="{{pinecone_index_name}}",PINECONE_NAMESPACE="{{pinecone_namespace}}",HF_EMBEDDING_MODEL="{{hf_embedding_model}}",HF_EMBEDDING_DIMENSION="{{hf_embedding_dimension}}",HF_CHAT_MODEL="{{hf_chat_model}}",HF_PROVIDER="{{hf_provider}}",PINECONE_RERANK_MODEL="{{pinecone_rerank_model}}",CHUNK_SIZE="{{chunk_size}}",CHUNK_OVERLAP="{{chunk_overlap}}",RETRIEVAL_TOP_K="{{retrieval_top_k}}",RERANK_TOP_N="{{rerank_top_n}}" \
+      --set-env-vars "{{runtime_env}}" \
       --set-secrets PINECONE_API_KEY=pinecone-api-key:latest,HUGGINGFACEHUB_API_TOKEN=huggingfacehub-api-token:latest,HF_TOKEN=huggingfacehub-api-token:latest
+
+# Deploy the indexing worker as a Cloud Run Job. It uses the same image as the API.
+[private]
+_cloud-job-deploy:
+    gcloud run jobs deploy "{{index_job}}" \
+      --image "{{image}}" \
+      --region "{{region}}" \
+      --memory "{{cloud_run_memory}}" \
+      --cpu "{{cloud_run_cpu}}" \
+      --task-timeout "{{cloud_run_job_timeout}}" \
+      --max-retries 0 \
+      --set-env-vars "{{runtime_env}}" \
+      --set-secrets PINECONE_API_KEY=pinecone-api-key:latest,HUGGINGFACEHUB_API_TOKEN=huggingfacehub-api-token:latest,HF_TOKEN=huggingfacehub-api-token:latest \
+      --command uv \
+      --args run,--no-sync,python,-m,src.index_job
 
 # Print the deployed Cloud Run service URL.
 cloud-url:
     gcloud run services describe "{{service}}" --region "{{region}}" --format='value(status.url)'
 
-# Index PDFs from the configured Cloud Storage bucket using the Cloud Run API.
+# Index PDFs from the configured Cloud Storage bucket using the Cloud Run Job.
 [private]
-_cloud-insert:
-    SERVICE_URL="$(gcloud run services describe "{{service}}" --region "{{region}}" --format='value(status.url)')" && \
-    curl -X POST "$SERVICE_URL/insert"
+_cloud-index:
+    gcloud run jobs execute "{{index_job}}" --region "{{region}}" --wait
 
 # Ask a question against the Cloud Run API.
 cloud-ask question:
@@ -167,4 +187,11 @@ cloud-logs:
     gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="{{service}}"' \
       --project "{{project_id}}" \
       --limit 50 \
+      --format "value(timestamp,severity,textPayload)"
+
+# Show recent Cloud Run logs for the indexing job.
+index-job-logs:
+    gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="{{index_job}}"' \
+      --project "{{project_id}}" \
+      --limit 100 \
       --format "value(timestamp,severity,textPayload)"

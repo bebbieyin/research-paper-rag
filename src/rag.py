@@ -1,5 +1,6 @@
 """Minimal production RAG pipeline for research papers."""
 
+import logging
 from functools import lru_cache
 from os import getenv
 from pathlib import Path
@@ -22,9 +23,11 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pinecone import Pinecone, ServerlessSpec
 
-from src.schema import InsertResponse, QuestionAnswer
+from src.schema import IndexResponse, QuestionAnswer
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def required_env(name: str) -> str:
@@ -61,6 +64,7 @@ CHUNK_SIZE = required_int_env("CHUNK_SIZE")
 CHUNK_OVERLAP = required_int_env("CHUNK_OVERLAP")
 RETRIEVAL_TOP_K = required_int_env("RETRIEVAL_TOP_K")
 RERANK_TOP_N = required_int_env("RERANK_TOP_N")
+INDEX_UPSERT_BATCH_SIZE = int(getenv("INDEX_UPSERT_BATCH_SIZE", "100"))
 
 ANSWER_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -68,12 +72,18 @@ ANSWER_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "You answer questions about research papers. Use only the provided "
             "context. If the context is insufficient, say you are unsure. "
-            "Include concise citations.\n\n"
+            "Return only valid JSON that matches the requested schema. Do not "
+            "wrap the JSON in Markdown. Every source citation object must include "
+            "all of these fields: source, page, chunk_number, quote. If a field "
+            'is unavailable, use "unknown" for source, page, or chunk_number, '
+            "and an empty string for quote. Always include confidence as one of "
+            '"high", "medium", or "low".\n\n'
             "{format_instructions}",
         ),
         ("human", "Question:\n{question}\n\nRetrieved context:\n{context}"),
     ],
 )
+ANSWER_PARSER = PydanticOutputParser(pydantic_object=QuestionAnswer)
 
 
 class AnswerChain(Protocol):
@@ -109,6 +119,7 @@ def stable_chunk_id(doc: Document) -> str:
 
 def load_local_pdf_pages() -> list[Document]:
     """Load PDF pages from DATA_DIR."""
+    logger.info("Loading local PDFs from %s.", data_dir())
     loader = DirectoryLoader(
         str(data_dir()),
         glob="**/*.pdf",
@@ -120,20 +131,24 @@ def load_local_pdf_pages() -> list[Document]:
 
 def load_gcs_pdf_pages(bucket_name: str, prefix: str) -> list[Document]:
     """Download PDF objects from GCS to temp files and load their pages."""
+    logger.info("Listing PDFs from gs://%s/%s.", bucket_name, prefix)
     client = storage.Client(project=optional_env("PROJECT_ID"))
     blobs = [
         blob
         for blob in client.list_blobs(bucket_name, prefix=prefix)
         if blob.name.lower().endswith(".pdf")
     ]
+    logger.info("Found %s PDF objects in Cloud Storage.", len(blobs))
 
     pages = []
     with TemporaryDirectory(prefix="research-paper-rag-") as temp_dir:
         temp_path = Path(temp_dir)
         for index, blob in enumerate(blobs, start=1):
+            logger.info("Downloading PDF %s/%s: %s.", index, len(blobs), blob.name)
             pdf_path = temp_path / f"{index:05d}-{Path(blob.name).name}"
             blob.download_to_filename(pdf_path)
             loaded_pages = PyMuPDFLoader(str(pdf_path)).load()
+            logger.info("Loaded %s pages from %s.", len(loaded_pages), blob.name)
             for page in loaded_pages:
                 page.metadata.update(
                     {
@@ -157,6 +172,7 @@ def load_pdf_pages() -> list[Document]:
 def load_pdf_chunks() -> tuple[int, list[Document]]:
     """Load PDFs and split them into indexed chunks."""
     pages = load_pdf_pages()
+    logger.info("Loaded %s PDF pages. Splitting into chunks.", len(pages))
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
@@ -164,6 +180,7 @@ def load_pdf_chunks() -> tuple[int, list[Document]]:
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     chunks = splitter.split_documents(pages)
+    logger.info("Created %s chunks for namespace %s.", len(chunks), NAMESPACE)
 
     for chunk_number, doc in enumerate(chunks):
         source_path = Path(str(doc.metadata.get("source", "unknown")))
@@ -192,6 +209,7 @@ def ensure_index() -> object:
     """Create the Pinecone index if it does not exist, then return it."""
     pc = pinecone_client()
     if not pc.has_index(INDEX_NAME):
+        logger.info("Creating Pinecone index %s.", INDEX_NAME)
         pc.create_index(
             name=INDEX_NAME,
             vector_type="dense",
@@ -204,12 +222,14 @@ def ensure_index() -> object:
                 "embedding_model": EMBEDDING_MODEL,
             },
         )
+    logger.info("Using Pinecone index %s.", INDEX_NAME)
     return pc.Index(INDEX_NAME)
 
 
 @lru_cache(maxsize=1)
 def embeddings() -> HuggingFaceEmbeddings:
     """Return the embedding model used for retrieval."""
+    logger.info("Loading embedding model %s.", EMBEDDING_MODEL)
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL,
         encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
@@ -226,15 +246,28 @@ def vector_store() -> PineconeVectorStore:
     )
 
 
-def insert_papers() -> InsertResponse:
+def index_papers() -> IndexResponse:
     """Index all configured PDFs."""
     loaded_pages, chunks = load_pdf_chunks()
     if chunks:
-        vector_store().add_documents(
-            chunks,
-            ids=[stable_chunk_id(doc) for doc in chunks],
-        )
-    return InsertResponse(
+        store = vector_store()
+        chunk_ids = [stable_chunk_id(doc) for doc in chunks]
+        for start in range(0, len(chunks), INDEX_UPSERT_BATCH_SIZE):
+            end = min(start + INDEX_UPSERT_BATCH_SIZE, len(chunks))
+            logger.info(
+                "Upserting chunks %s-%s of %s to Pinecone.",
+                start + 1,
+                end,
+                len(chunks),
+            )
+            store.add_documents(chunks[start:end], ids=chunk_ids[start:end])
+    logger.info(
+        "Indexing complete: loaded_pages=%s indexed_chunks=%s namespace=%s.",
+        loaded_pages,
+        len(chunks),
+        NAMESPACE,
+    )
+    return IndexResponse(
         loaded_pages=loaded_pages,
         indexed_chunks=len(chunks),
         namespace=NAMESPACE,
@@ -308,7 +341,6 @@ def format_context(docs: list[Document]) -> str:
 @lru_cache(maxsize=1)
 def rag_chain() -> AnswerChain:
     """Return the cached answer-generation chain."""
-    parser = PydanticOutputParser(pydantic_object=QuestionAnswer)
     llm = HuggingFaceEndpoint(
         repo_id=CHAT_MODEL_ID,
         task="text-generation",
@@ -317,17 +349,16 @@ def rag_chain() -> AnswerChain:
         do_sample=False,
         repetition_penalty=1.03,
     )
-    return ANSWER_PROMPT | ChatHuggingFace(llm=llm) | parser
+    return ANSWER_PROMPT | ChatHuggingFace(llm=llm) | ANSWER_PARSER
 
 
 def answer_question(question: str) -> QuestionAnswer:
     """Answer a question using retrieved paper chunks."""
-    parser = PydanticOutputParser(pydantic_object=QuestionAnswer)
     docs = retrieve(question)
     return rag_chain().invoke(
         {
             "question": question,
             "context": format_context(docs),
-            "format_instructions": parser.get_format_instructions(),
+            "format_instructions": ANSWER_PARSER.get_format_instructions(),
         }
     )

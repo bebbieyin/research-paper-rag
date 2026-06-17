@@ -13,7 +13,7 @@ Create `.env` from the example and fill in your real values.
 cp .env.example .env
 ```
 
-One-time cloud setup:
+One-time cloud storage setup:
 
 ```bash
 just grant-secret-access
@@ -30,11 +30,15 @@ List available commands:
 just
 ```
 
-When PDFs change, refresh the data first:
+When PDFs change, refresh the remote data first:
 
 ```bash
 just data-refresh
 ```
+
+`just data-refresh` expects the Cloud Run indexing job to exist. Run
+`just deploy-production` after code or deployment configuration changes so both
+the API service and indexing job are updated.
 
 Then make code changes and test locally:
 
@@ -66,12 +70,13 @@ Stop the local Docker app:
 just stop
 ```
 
-`just data-refresh` syncs local `DATA_DIR` to Cloud Storage and asks Cloud Run
-to index the bucket PDFs into Pinecone. `just deploy-production` is only for
-shipping code changes.
+`just data-refresh` syncs local `DATA_DIR` to Cloud Storage and runs a Cloud
+Run Job to index the bucket PDFs into Pinecone. `just deploy-production` builds
+the image, deploys the Cloud Run API, and creates or updates the indexing job.
 
-The local Docker app reads PDFs from local `DATA_DIR`; Cloud Run reads PDFs
-from `GCS_BUCKET` and `GCS_PREFIX`.
+The local Docker app and Cloud Run API both answer from the shared Pinecone
+index. PDF indexing is handled by the Cloud Run indexing job, which reads
+`GCS_BUCKET` and `GCS_PREFIX`.
 
 ### Short Version
 
@@ -91,12 +96,6 @@ Health check:
 
 ```bash
 curl http://127.0.0.1:8000/health
-```
-
-Index PDFs:
-
-```bash
-curl -X POST http://127.0.0.1:8000/insert
 ```
 
 Ask a question:
