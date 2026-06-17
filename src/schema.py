@@ -9,8 +9,8 @@ class HealthCheck(BaseModel):
     status: str
 
 
-class InsertResponse(BaseModel):
-    """Response returned after inserting PDF chunks."""
+class IndexResponse(BaseModel):
+    """Response returned after indexing PDF chunks."""
 
     loaded_pages: int
     indexed_chunks: int
