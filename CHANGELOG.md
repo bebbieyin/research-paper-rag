@@ -1,3 +1,17 @@
+# [1.2.0](https://github.com/bebbieyin/research-paper-rag/compare/v1.1.0+main...v1.2.0+main) (2026-06-17)
+
+
+### Bug Fixes
+
+* CU-86exypp32 - remove outdated endpoint ([5580092](https://github.com/bebbieyin/research-paper-rag/commit/55800920af21e81dbf924a30df418c5fb45695cf))
+
+
+### Features
+
+* CU-86exypp32 - add justfile ([bbbdd9c](https://github.com/bebbieyin/research-paper-rag/commit/bbbdd9cf87058c54ab4a3b31663e6c8f37d675cd))
+* CU-86exypp32 - log error ([f3039f3](https://github.com/bebbieyin/research-paper-rag/commit/f3039f3e98253f9a7be9148ec2b5b3560cf62f93))
+* CU-86exypp32 - setup docker for application ([de71ef7](https://github.com/bebbieyin/research-paper-rag/commit/de71ef7f6572b6e52d5efe8dd88970ebe05211ce))
+
 # [1.1.0](https://github.com/bebbieyin/research-paper-rag/compare/v1.0.0+main...v1.1.0+main) (2026-06-15)
 
 
